@@ -1,0 +1,34 @@
+# Data Collection Settings
+data_collection:
+  stock_symbols:
+    - "RELIANCE.NS"
+    - "TCS.NS"
+    - "INFY.NS"
+    - "HDFCBANK.NS"
+    - "ICICIBANK.NS"
+  
+  period: "2y"  # Historical data period
+  interval: "1d"  # Daily data
+  
+# Model Settings
+model:
+  sequence_length: 60  # Days to look back
+  lstm_units: 128
+  dropout_rate: 0.2
+  epochs: 50
+  batch_size: 32
+  
+# Drift Detection
+drift:
+  reference_period_days: 90
+  detection_threshold: 0.1
+  
+# MLflow
+mlflow:
+  experiment_name: "stock_prediction"
+  tracking_uri: "http://localhost:5000"
+  
+# Retraining Schedule
+retraining:
+  cron_schedule: "0 18 * * 1-5"  # 6 PM weekdays
+  performance_threshold: 0.85

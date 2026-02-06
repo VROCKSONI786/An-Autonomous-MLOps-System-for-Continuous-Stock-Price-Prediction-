@@ -1,0 +1,8 @@
+/.vscode
+/venv
+/.env
+/mlartifacts
+/mlflow
+/data/raw/
+/mlruns
+/models

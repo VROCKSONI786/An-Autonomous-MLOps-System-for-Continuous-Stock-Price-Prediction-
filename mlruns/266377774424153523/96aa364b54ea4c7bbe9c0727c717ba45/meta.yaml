@@ -1,0 +1,14 @@
+artifact_uri: mlflow-artifacts:/266377774424153523/96aa364b54ea4c7bbe9c0727c717ba45/artifacts
+end_time: 1770309400311
+entry_point_name: ''
+experiment_id: '266377774424153523'
+lifecycle_stage: active
+run_id: 96aa364b54ea4c7bbe9c0727c717ba45
+run_name: LSTM_HDFCBANK.NS
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1770309400133
+status: 4
+tags: []
+user_id: Dell

@@ -1,0 +1,14 @@
+artifact_uri: mlflow-artifacts:/266377774424153523/742aa5f0fab04c84b03616e3a5ccc522/artifacts
+end_time: 1770309399845
+entry_point_name: ''
+experiment_id: '266377774424153523'
+lifecycle_stage: active
+run_id: 742aa5f0fab04c84b03616e3a5ccc522
+run_name: LSTM_TCS.NS
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1770309399646
+status: 4
+tags: []
+user_id: Dell

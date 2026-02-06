@@ -1,0 +1,14 @@
+artifact_uri: mlflow-artifacts:/266377774424153523/b30b3a13699642afa23bfbc4986f3212/artifacts
+end_time: 1770309400544
+entry_point_name: ''
+experiment_id: '266377774424153523'
+lifecycle_stage: active
+run_id: b30b3a13699642afa23bfbc4986f3212
+run_name: LSTM_ICICIBANK.NS
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1770309400366
+status: 4
+tags: []
+user_id: Dell

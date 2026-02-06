@@ -1,0 +1,33 @@
+# Data Collection
+yfinance
+pandas
+numpy
+requests
+beautifulsoup4
+selenium
+
+# ML & Deep Learning
+tensorflow
+scikit-learn
+keras
+
+# MLOps
+mlflow
+evidently
+
+# LLM & NLP
+google-generativeai
+transformers
+sentencepiece
+
+# Visualization & UI
+streamlit
+plotly
+matplotlib
+seaborn
+
+# Utilities
+python-dotenv
+schedule
+joblib
+pyyaml
