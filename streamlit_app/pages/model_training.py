@@ -1,167 +1,151 @@
-import streamlit as st
-import sys
 import os
+import sys
 import yaml
+import pandas as pd
+import streamlit as st
+from datetime import datetime
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SRC_ROOT = os.path.join(PROJECT_ROOT, "src")
+for p in [SRC_ROOT, PROJECT_ROOT]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from src.model.model_trainer import ModelTrainer
-from src.preprocessing.data_preprocessor import DataPreprocessor
+from model.model_trainer import ModelTrainer
+from preprocessing.data_preprocessor import DataPreprocessor
+
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "saved_models")
+
+
+def _load_config() -> dict:
+    with open(os.path.join(PROJECT_ROOT, "config", "config.yaml")) as f:
+        return yaml.safe_load(f)
+
 
 def show():
     st.header("🤖 Model Training")
-    
-    st.write("Train LSTM models for stock price prediction")
-    
-    # Load config
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "config.yaml")
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    symbols = config['data_collection']['stock_symbols']
-    
-    # Training settings
+    st.write("Train Bidirectional LSTM models for stock price prediction with MLflow tracking.")
+
+    config  = _load_config()
+    symbols = config["data_collection"]["stock_symbols"]
+
+    # ── Settings ──────────────────────────────────────────────────────────────
     st.subheader("⚙️ Training Settings")
-    
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
-        epochs = st.number_input("Epochs", min_value=10, max_value=200, value=50, step=10)
-        batch_size = st.number_input("Batch Size", min_value=16, max_value=128, value=32, step=16)
-    
+        epochs      = st.number_input("Epochs",     min_value=10,  max_value=200, value=50,  step=10)
+        batch_size  = st.number_input("Batch Size", min_value=16,  max_value=128, value=32,  step=16)
     with col2:
-        lstm_units = st.number_input("LSTM Units", min_value=32, max_value=256, value=128, step=32)
-        dropout = st.slider("Dropout Rate", min_value=0.0, max_value=0.5, value=0.2, step=0.05)
-    
+        lstm_units  = st.number_input("LSTM Units", min_value=32,  max_value=256, value=128, step=32)
+        dropout     = st.slider("Dropout Rate",     min_value=0.0, max_value=0.5, value=0.2, step=0.05)
     with col3:
-        sequence_length = st.number_input("Sequence Length", min_value=30, max_value=120, value=60, step=10)
-    
-    # Select stocks to train
+        seq_length  = st.number_input("Sequence Length", min_value=30, max_value=120, value=60, step=10)
+        st.metric("MLflow", "localhost:5000", help="Start with: mlflow server --port 5000")
+
+    # ── Stock selection ────────────────────────────────────────────────────────
     st.subheader("📊 Select Stocks to Train")
-    selected_symbols = st.multiselect("Stocks", symbols, default=symbols)
-    
-    # Preprocessing step
-    st.subheader("🔧 Data Preprocessing")
-    
-    if st.button("📊 Preprocess Data", use_container_width=True):
-        with st.spinner("Preprocessing data..."):
+    selected = st.multiselect("Stocks", symbols, default=symbols)
+
+    # ── Step 1: Preprocess ────────────────────────────────────────────────────
+    st.subheader("🔧 Step 1 — Preprocess Data")
+    st.caption("Must run before training if data has changed.")
+
+    if st.button("📊 Preprocess Data", width='stretch'):
+        with st.spinner("Preprocessing… creating technical indicators and scaling data."):
             try:
                 preprocessor = DataPreprocessor()
-                preprocessed_data = preprocessor.preprocess_pipeline()
-                
-                if preprocessed_data is not None:
-                    st.success(f"✅ Data preprocessed successfully! Shape: {preprocessed_data.shape}")
-                    st.dataframe(preprocessed_data.head(), use_container_width=True)
+                result       = preprocessor.preprocess_pipeline()
+                if result is not None:
+                    st.success(f"✅ Preprocessed data shape: {result.shape}")
+                    st.dataframe(result.head(5), width="stretch")
                 else:
-                    st.error("❌ Preprocessing failed!")
-                    
+                    st.error("❌ Preprocessing failed — ensure stock_prices_*.csv exists in data/raw/")
             except Exception as e:
-                st.error(f"❌ Error during preprocessing: {str(e)}")
-    
-    # Training step
-    st.subheader("🚀 Train Models")
-    
-    if st.button("🤖 Start Training", use_container_width=True, type="primary"):
-        if not selected_symbols:
-            st.warning("⚠️ Please select at least one stock to train")
+                st.error(f"❌ Preprocessing error: {e}")
+
+    # ── Step 2: Train ─────────────────────────────────────────────────────────
+    st.subheader("🚀 Step 2 — Train Models")
+
+    if st.button("🤖 Start Training", width='stretch', type="primary"):
+        if not selected:
+            st.warning("⚠ Select at least one stock.")
             return
-        
-        with st.spinner("Training models... This may take several minutes"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            try:
-                # Initialize trainer
-                trainer = ModelTrainer()
-                
-                # Update config with user settings
-                trainer.model_config['epochs'] = epochs
-                trainer.model_config['batch_size'] = batch_size
-                trainer.model_config['lstm_units'] = lstm_units
-                trainer.model_config['dropout_rate'] = dropout
-                trainer.model_config['sequence_length'] = sequence_length
-                
-                results = {}
-                
-                for idx, symbol in enumerate(selected_symbols):
-                    status_text.text(f"Training {symbol}... ({idx+1}/{len(selected_symbols)})")
-                    progress_bar.progress((idx) / len(selected_symbols))
-                    
-                    try:
-                        model, metrics = trainer.train_for_symbol(symbol)
-                        results[symbol] = metrics
-                    except Exception as e:
-                        st.warning(f"⚠️ Failed to train {symbol}: {str(e)}")
-                        continue
-                
-                progress_bar.progress(100)
-                status_text.text("✅ Training complete!")
-                
-                st.success(f"✅ Successfully trained {len(results)}/{len(selected_symbols)} models!")
-                
-                # Show results
-                st.subheader("📊 Training Results")
-                
-                import pandas as pd
+
+        # Check preprocessed data exists
+        prep_path = os.path.join(PROJECT_ROOT, "data", "processed", "preprocessed_data.csv")
+        if not os.path.exists(prep_path):
+            st.error("❌ preprocessed_data.csv not found. Run Preprocess Data first.")
+            return
+
+        progress = st.progress(0, text="Starting training…")
+        log_area = st.empty()
+
+        try:
+            trainer = ModelTrainer()
+            trainer.model_config["epochs"]          = int(epochs)
+            trainer.model_config["batch_size"]       = int(batch_size)
+            trainer.model_config["lstm_units"]       = int(lstm_units)
+            trainer.model_config["dropout_rate"]     = float(dropout)
+            trainer.model_config["sequence_length"]  = int(seq_length)
+
+            results = {}
+
+            for i, symbol in enumerate(selected):
+                pct = int((i / len(selected)) * 100)
+                progress.progress(pct, text=f"Training {symbol}… ({i+1}/{len(selected)})")
+                log_area.info(f"Training {symbol}…")
+
+                try:
+                    model, metrics = trainer.train_for_symbol(symbol)
+                    results[symbol] = metrics
+                    log_area.success(f"✅ {symbol} — MAE: {metrics[1]:.6f}")
+                except Exception as e:
+                    log_area.warning(f"⚠ {symbol} failed: {e}")
+
+            progress.progress(100, text="✅ Training complete!")
+
+            if results:
+                st.success(f"✅ Trained {len(results)}/{len(selected)} models successfully!")
                 results_df = pd.DataFrame([
                     {
-                        'Symbol': symbol,
-                        'Test Loss': f"{metrics[0]:.6f}",
-                        'Test MAE': f"{metrics[1]:.6f}",
-                        'Test MSE': f"{metrics[2]:.6f}"
+                        "Symbol":    sym,
+                        "Test Loss": f"{m[0]:.6f}",
+                        "Test MAE":  f"{m[1]:.6f}",
+                        "Test MSE":  f"{m[2]:.6f}",
                     }
-                    for symbol, metrics in results.items()
+                    for sym, m in results.items()
                 ])
-                
-                st.dataframe(results_df, use_container_width=True, hide_index=True)
-                
-            except Exception as e:
-                st.error(f"❌ Error during training: {str(e)}")
-                progress_bar.progress(0)
-    
-    # # Show existing models
-    # st.subheader("💾 Saved Models")
-    
-    # models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models", "saved_models")
-    
-    # if os.path.exists(models_dir):
-    #     model_files = [f for f in os.listdir(models_dir) if f.endswith('.keras')]
-        
-    #     if model_files:
-    #         import pandas as pd
-    #         from datetime import datetime
-            
-    #         models_df = pd.DataFrame({
-    #             'Model': model_files,
-    #             'Symbol': [f.replace('_lstm_model.keras', '') for f in model_files],
-    #             #'Modified': [datetime.fromtimestamp(os.path.getmtime(os.path.join(models_dir, f))).strftime('%Y-%m-%d %H:%M:%S') for f in model_files]
-    #         })
-    #         st.dataframe(models_df, use_container_width=True, hide_index=True)
-    #     else:
-    #         st.info("No trained models found. Click 'Start Training' to begin.")
-    # else:
-    #     st.info("Models directory not found.")
-    # Show existing models
+                st.dataframe(results_df, width="stretch", hide_index=True)
+            else:
+                st.error("❌ No models trained successfully.")
+
+        except Exception as e:
+            st.error(f"❌ Training error: {e}")
+
+    # ── Saved models ───────────────────────────────────────────────────────────
+    st.divider()
     st.subheader("💾 Saved Models")
-    
-    # FIXED PATH: Points to src/model/models/saved_models
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    models_dir = os.path.join(project_root, "src", "models", "saved_models")
-    
-    if os.path.exists(models_dir):
-        model_files = [f for f in os.listdir(models_dir) if f.endswith('.keras')]
-        
+
+    if os.path.exists(MODELS_DIR):
+        model_files = sorted(
+            [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")],
+            reverse=True,
+        )
         if model_files:
-            import pandas as pd
-            
-            models_df = pd.DataFrame({
-                'Model': model_files,
-                'Symbol': [f.replace('_lstm_model.keras', '') for f in model_files],
-            })
-            # Updated width='stretch' to resolve deprecation warning
-            st.dataframe(models_df, width='stretch', hide_index=True)
+            rows = []
+            for f in model_files:
+                fpath = os.path.join(MODELS_DIR, f)
+                size  = os.path.getsize(fpath) / (1024 * 1024)
+                mtime = datetime.fromtimestamp(os.path.getmtime(fpath)).strftime("%Y-%m-%d %H:%M")
+                rows.append({
+                    "Model File":  f,
+                    "Symbol":      f.replace("_lstm_model.keras", ""),
+                    "Size (MB)":   f"{size:.1f}",
+                    "Last Trained": mtime,
+                })
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
         else:
-            st.info("No trained models found. Click 'Start Training' to begin.")
+            st.info("No trained models found. Click 'Start Training' to create them.")
     else:
-        # Debugging: Show where it's looking if it still fails
-        st.error(f"Models directory not found at: {models_dir}")
+        st.info(f"Models directory not found: `{MODELS_DIR}`")

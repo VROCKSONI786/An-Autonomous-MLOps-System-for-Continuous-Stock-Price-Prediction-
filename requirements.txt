@@ -5,11 +5,13 @@ numpy
 requests
 beautifulsoup4
 selenium
+ta
 
 # ML & Deep Learning
 tensorflow
 scikit-learn
 keras
+feedparser
 
 # MLOps
 mlflow
@@ -17,6 +19,7 @@ evidently
 
 # LLM & NLP
 google-generativeai
+google-genai
 transformers
 sentencepiece
 

@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 class NewsCollector:
     """Collect news from multiple sources"""
     
-    def __init__(self):
+    def __init__(self, data_dir=None):
+        self.data_dir = data_dir
         self.sources = {
             'moneycontrol': 'https://www.moneycontrol.com/rss/latestnews.xml',
             'economic_times': 'https://economictimes.indiatimes.com/rssfeedstopstories.cms',
@@ -97,7 +98,10 @@ class NewsCollector:
         """Save news data"""
         import os
         try:
-            filepath = os.path.join("data", "raw", filename)
+            if self.data_dir:
+                filepath = os.path.join(self.data_dir, filename)
+            else:
+                filepath = os.path.join("data", "raw", filename)
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             
             news_df.to_csv(filepath, index=False)

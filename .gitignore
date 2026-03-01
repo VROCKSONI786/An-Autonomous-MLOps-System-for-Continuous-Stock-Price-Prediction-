@@ -4,5 +4,11 @@
 /mlartifacts
 /mlflow
 /data/raw/
+/data/processed/
+/data/reports/
+/logs/
+/logs/plots/
 /mlruns
 /models
+/models/checkpoints/
+/streamlit_app/pages/__pycache__/

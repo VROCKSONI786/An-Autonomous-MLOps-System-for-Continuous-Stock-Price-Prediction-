@@ -10,10 +10,11 @@ logger = logging.getLogger(__name__)
 class YFinanceCollector:
     """Collect stock data from Yahoo Finance"""
     
-    def __init__(self, symbols, period="2y", interval="1d"):
+    def __init__(self, symbols, period="2y", interval="1d", data_dir=None):
         self.symbols = symbols
         self.period = period
         self.interval = interval
+        self.data_dir = data_dir
         
     def fetch_stock_data(self, symbol):
         """Fetch historical data for a single stock"""
@@ -24,8 +25,8 @@ class YFinanceCollector:
             # Get historical data
             hist_data = ticker.history(period=self.period, interval=self.interval)
             
-            # Get additional info
-            info = ticker.info
+            # Get additional info (safe handling for None)
+            info = ticker.info or {}
             
             # Add fundamental data
             hist_data['Symbol'] = symbol
@@ -59,7 +60,10 @@ class YFinanceCollector:
     def save_data(self, data, filename="raw_stock_data.csv"):
         """Save collected data to CSV"""
         try:
-            filepath = os.path.join("data", "raw", filename)
+            if self.data_dir:
+                filepath = os.path.join(self.data_dir, filename)
+            else:
+                filepath = os.path.join("data", "raw", filename)
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             
             data.to_csv(filepath)

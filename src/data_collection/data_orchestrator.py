@@ -5,7 +5,6 @@ import logging
 import os
 import sys
 
-# Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_collection.yfinance_collector import YFinanceCollector
@@ -16,88 +15,110 @@ from data_collection.sentiment_analyzer import SentimentAnalyzer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _project_root() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(here))
+
+
 class DataOrchestrator:
-    """Orchestrate all data collection activities"""
-    
-    def __init__(self, config_path=None):
-        # Find config file relative to project root
+    """Orchestrate all data collection activities."""
+
+    def __init__(self, config_path: str | None = None):
+        root = _project_root()
         if config_path is None:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-            config_path = os.path.join(project_root, "config", "config.yaml")
-        
+            config_path = os.path.join(root, "config", "config.yaml")
+
         logger.info(f"Loading config from: {config_path}")
-        
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             self.config = yaml.safe_load(f)
-        
-        self.symbols = self.config['data_collection']['stock_symbols']
-        self.period = self.config['data_collection']['period']
-        self.interval = self.config['data_collection']['interval']
-        
-        # Set data directories
-        self.data_dir = os.path.join(project_root, "data", "raw")
+
+        self.symbols  = self.config["data_collection"]["stock_symbols"]
+        self.period   = self.config["data_collection"]["period"]
+        self.interval = self.config["data_collection"]["interval"]
+
+        # Always save raw data under project_root/data/raw/
+        self.data_dir = os.path.join(root, "data", "raw")
         os.makedirs(self.data_dir, exist_ok=True)
-    
-    def collect_all_data(self):
-        """Collect data from all sources"""
+
+    def collect_all_data(self) -> dict:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
         logger.info("=== Starting Data Collection ===")
-        
-        # 1. Stock Price Data
-        logger.info("Step 1: Collecting stock price data...")
-        yf_collector = YFinanceCollector(self.symbols, self.period, self.interval)
-        price_data = yf_collector.fetch_all_stocks()
-        
+
+        # ── 1. Stock prices ───────────────────────────────────────────────────
+        logger.info("Step 1: Collecting stock price data…")
+        yf = YFinanceCollector(self.symbols, self.period, self.interval)
+        price_data = yf.fetch_all_stocks()
+
         if price_data is not None:
-            price_file = f"stock_prices_{timestamp}.csv"
-            yf_collector.save_data(price_data, price_file)
-            logger.info(f"✓ Stock prices collected: {len(price_data)} records")
-        
-        # 2. Fundamental Data
-        logger.info("Step 2: Collecting fundamental data...")
-        screener_collector = ScreenerCollector()
-        fundamental_data = screener_collector.fetch_all_financials(self.symbols)
-        
+            price_file = os.path.join(self.data_dir, f"stock_prices_{timestamp}.csv")
+            price_data.to_csv(price_file)
+            logger.info(f"✓ Stock prices: {len(price_data)} records → {price_file}")
+        else:
+            logger.warning("✗ Stock price collection failed.")
+
+        # ── 2. Fundamentals ───────────────────────────────────────────────────
+        logger.info("Step 2: Collecting fundamental data…")
+        screener = ScreenerCollector()
+        fundamental_data = screener.fetch_all_financials(self.symbols)
+
         if fundamental_data is not None:
             fund_file = os.path.join(self.data_dir, f"fundamentals_{timestamp}.csv")
             fundamental_data.to_csv(fund_file, index=False)
-            logger.info(f"✓ Fundamentals collected: {len(fundamental_data)} records")
-        
-        # 3. News Data
-        logger.info("Step 3: Collecting news articles...")
+            logger.info(f"✓ Fundamentals: {len(fundamental_data)} records → {fund_file}")
+        else:
+            logger.warning("✗ Fundamentals collection failed (screener.in may be blocked).")
+
+        # ── 3. News ───────────────────────────────────────────────────────────
+        logger.info("Step 3: Collecting news articles…")
         news_collector = NewsCollector()
         news_data = news_collector.collect_all_news(self.symbols)
-        
-        if news_data is not None:
-            news_file = f"news_{timestamp}.csv"
-            news_collector.save_news(news_data, news_file)
-            logger.info(f"✓ News collected: {len(news_data)} articles")
-            
-            # 4. Sentiment Analysis (limit to first 5 articles for speed)
-            logger.info("Step 4: Analyzing sentiment...")
-            sentiment_analyzer = SentimentAnalyzer()
-            sentiment_data = sentiment_analyzer.analyze_bulk_sentiment(news_data.head(5))
-            
-            sent_file = os.path.join(self.data_dir, f"sentiment_{timestamp}.csv")
-            sentiment_data.to_csv(sent_file, index=False)
-            logger.info(f"✓ Sentiment analyzed: {len(sentiment_data)} articles")
-            
-            # Market Summary
-            summary = sentiment_analyzer.get_market_sentiment_summary(sentiment_data)
-            logger.info(f"\n=== Market Sentiment Summary ===\n{summary}\n")
+
+        sentiment_data = None
+
+        if news_data is not None and not news_data.empty:
+            news_file = os.path.join(self.data_dir, f"news_{timestamp}.csv")
+            news_data.to_csv(news_file, index=False)
+            logger.info(f"✓ News: {len(news_data)} articles → {news_file}")
+
+            # ── 4. Sentiment ──────────────────────────────────────────────────
+            logger.info("Step 4: Analyzing sentiment…")
+            logger.info(
+                "  NOTE: Free-tier Gemini allows 15 req/min. "
+                "Each article takes ~5s. Analyzing top 10 articles."
+            )
+
+            try:
+                # min_delay=5s → 12 req/min, safely under 15 RPM limit
+                analyzer = SentimentAnalyzer(min_delay_seconds=5.0, max_retries=2)
+                sentiment_data = analyzer.analyze_bulk_sentiment(
+                    news_data,
+                    max_articles=10,      # conservative for free tier
+                )
+
+                sent_file = os.path.join(self.data_dir, f"sentiment_{timestamp}.csv")
+                sentiment_data.to_csv(sent_file, index=False)
+                logger.info(f"✓ Sentiment: {len(sentiment_data)} articles → {sent_file}")
+
+                # Market summary
+                summary = analyzer.get_market_sentiment_summary(sentiment_data)
+                logger.info(f"\n=== Market Sentiment Summary ===\n{summary}\n")
+
+            except Exception as e:
+                logger.error(f"Sentiment analysis failed: {e}")
+                sentiment_data = None
         else:
-            sentiment_data = None
-        
+            logger.warning("✗ No news collected — skipping sentiment.")
+
         logger.info("=== Data Collection Complete ===")
-        
+
         return {
-            'price_data': price_data,
-            'fundamental_data': fundamental_data,
-            'news_data': news_data,
-            'sentiment_data': sentiment_data
+            "price_data":       price_data,
+            "fundamental_data": fundamental_data,
+            "news_data":        news_data,
+            "sentiment_data":   sentiment_data,
         }
+
 
 if __name__ == "__main__":
     orchestrator = DataOrchestrator()

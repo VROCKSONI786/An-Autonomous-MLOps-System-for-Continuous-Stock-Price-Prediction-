@@ -26,9 +26,20 @@ class LSTMStockModel:
         self.n_features = n_features
         self.model = None
         self.history = None
+        # placeholder for configuration parameters supplied by external
+        # orchestrators (ModelTrainer, streamlit UI, etc).  Historically
+        # `ModelTrainer` did a ``lstm.model_config.update(...)`` after
+        # creating an instance which blew up because no such attribute
+        # existed.  Add it here so that callers can freely merge their
+        # settings without having to worry about initialization order.
+        self.model_config: dict = {}
         
     def build_model(self, lstm_units=128, dropout_rate=0.2):
         """Build Bidirectional LSTM model"""
+        # allow callers to override via model_config if available
+        lstm_units = self.model_config.get("lstm_units", lstm_units)
+        dropout_rate = self.model_config.get("dropout_rate", dropout_rate)
+
         logger.info("Building Bidirectional LSTM model...")
         
         model = Sequential([
@@ -107,12 +118,37 @@ class LSTMStockModel:
         
         return X_train, X_val, X_test, y_train, y_val, y_test
     
-    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32):
-        """Train the model"""
+    def train(
+        self,
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        epochs: int | None = None,
+        batch_size: int | None = None,
+        symbol: str | None = None,
+        save_dir: str | None = None,
+    ) -> dict:
+        """Train the model.
+
+        This method is used both by the standalone script in ``lstm_model.py``
+        and the higher level ``ModelTrainer`` class.  The latter passes
+        ``symbol``/``save_dir`` so it can persist the checkpoint and return a
+        small summary dict that is later consumed for MLflow logging.  To
+        remain backwards compatible we continue to accept the simple
+        ``epochs``/``batch_size`` arguments and default them to values stored
+        in ``self.model_config`` when not provided.
+        """
         logger.info("Starting model training...")
-        
+
         if self.model is None:
             self.build_model()
+
+        # allow defaults to be driven from configuration if unspecified
+        if epochs is None:
+            epochs = int(self.model_config.get("epochs", 50))
+        if batch_size is None:
+            batch_size = int(self.model_config.get("batch_size", 32))
         
         # Callbacks
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -149,12 +185,34 @@ class LSTMStockModel:
             epochs=epochs,
             batch_size=batch_size,
             callbacks=callbacks,
-            verbose=1
+            verbose=1,
         )
-        
+
         logger.info("Training complete!")
-        
-        return self.history
+
+        # summarize results for callers that expect a dict (e.g. ModelTrainer)
+        hist = self.history.history
+        best_val_loss = min(hist.get("val_loss", [float("inf")]))
+        best_val_mae = min(hist.get("val_mae", [float("inf")]))
+        epochs_run = len(hist.get("loss", []))
+
+        model_path = None
+        if symbol and save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            model_path = os.path.join(save_dir, f"{symbol}_lstm_model.keras")
+            try:
+                # ``save_model`` will create parent dir if needed
+                self.save_model(model_path)
+            except Exception:
+                logger.warning(f"Failed to save model to {model_path}", exc_info=True)
+
+        return {
+            "history": hist,
+            "best_val_loss": best_val_loss,
+            "best_val_mae": best_val_mae,
+            "epochs_run": epochs_run,
+            "model_path": model_path,
+        }
     
     def evaluate(self, X_test, y_test):
         """Evaluate model on test data"""
@@ -173,32 +231,49 @@ class LSTMStockModel:
         predictions = self.model.predict(X, verbose=0)
         return predictions
     
+    def _find_project_root(self) -> str:
+        """Search upward for repository root by looking for common markers.
+
+        Falls back to two-levels-up if no marker is found.
+        """
+        cur = os.path.dirname(os.path.abspath(__file__))
+        search_limit = 6
+        for _ in range(search_limit):
+            # markers that indicate project root
+            if os.path.isdir(os.path.join(cur, "config")) or os.path.exists(os.path.join(cur, "requirements.txt")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        # fallback (previous behavior)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.dirname(os.path.dirname(current_dir))
+
     def save_model(self, filepath=None):
-        """Save the trained model"""
+        """Save the trained model to the canonical project `models/saved_models` by default."""
         try:
             if filepath is None:
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                project_root = os.path.dirname(os.path.dirname(current_dir))
+                project_root = self._find_project_root()
                 filepath = os.path.join(project_root, "models", "saved_models", "lstm_model.keras")
-            
+
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             self.model.save(filepath)
             logger.info(f"Model saved to {filepath}")
-            
+
         except Exception as e:
             logger.error(f"Error saving model: {str(e)}")
-    
+
     def load_model(self, filepath=None):
-        """Load a saved model"""
+        """Load a saved model from the canonical project `models/saved_models` by default."""
         try:
             if filepath is None:
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                project_root = os.path.dirname(os.path.dirname(current_dir))
+                project_root = self._find_project_root()
                 filepath = os.path.join(project_root, "models", "saved_models", "lstm_model.keras")
-            
+
             self.model = keras.models.load_model(filepath)
             logger.info(f"Model loaded from {filepath}")
-            
+
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
 
@@ -216,13 +291,17 @@ if __name__ == "__main__":
         validation_split=0.1
     )
     
-    # Train model
-    history = lstm_model.train(
+    # Train model (returns a summary dict when called with symbol/save_dir)
+    result = lstm_model.train(
         X_train, y_train,
         X_val, y_val,
         epochs=50,
         batch_size=32
     )
+    # ``result`` will be a Keras ``History`` object when using the simple
+    # signature above; if more kwargs are supplied (see docstring) it will be
+    # a dict with keys such as ``history``, ``best_val_loss`` etc.
+    history = result if not isinstance(result, dict) else result.get("history")
     
     # Evaluate
     results = lstm_model.evaluate(X_test, y_test)
