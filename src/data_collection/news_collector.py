@@ -17,6 +17,14 @@ class NewsCollector:
             'moneycontrol': 'https://www.moneycontrol.com/rss/latestnews.xml',
             'economic_times': 'https://economictimes.indiatimes.com/rssfeedstopstories.cms',
             'business_standard': 'https://www.business-standard.com/rss/home_page_top_stories.rss',
+            "reuters_business": "https://feeds.reuters.com/reuters/businessNews",
+            "reuters_markets":  "https://feeds.reuters.com/reuters/companyNews",
+            "economic_times":   "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+            "moneycontrol":     "https://www.moneycontrol.com/rss/MCtopnews.xml",
+            "business_standard":"https://www.business-standard.com/rss/markets-106.rss",
+            "livemint_markets": "https://www.livemint.com/rss/markets",
+            "rbi_press":        "https://www.rbi.org.in/pressreleases/rss.aspx",
+            "investing_india":  "https://in.investing.com/rss/news_283.rss",
         }
         
     def fetch_rss_news(self, source_name, url, max_articles=20):

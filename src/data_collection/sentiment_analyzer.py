@@ -1,26 +1,8 @@
-"""
-sentiment_analyzer.py
-─────────────────────
-Uses the NEW google-genai SDK exclusively (pip install -U google-genai).
-Do NOT use google-generativeai — that package is deprecated and
-will no longer receive updates or bug fixes.
-
-Migration reference: https://ai.google.dev/gemini-api/docs/migrate
-
-Key improvements over old code:
-  - Pydantic schema → response.parsed (no manual JSON parsing, no fence stripping)
-  - client.models.generate_content() — new centralized client pattern
-  - Proper 429 handling: reads retry_delay seconds from error, waits, retries
-  - Enforces 5s between requests (free tier: 15 RPM limit)
-  - gemini-1.5-flash first: 1500 req/day free (gemini-2.0-flash = 0 in many regions)
-"""
-
 import os
 import re
 import time
-import json
-import random
 import logging
+import random
 import pandas as pd
 from html.parser import HTMLParser
 from typing import Optional
@@ -47,7 +29,6 @@ class _HTMLStripper(HTMLParser):
 
 
 def _strip_html(raw: str) -> str:
-    """Remove all HTML tags and collapse whitespace."""
     if not raw or not isinstance(raw, str):
         return ""
     stripper = _HTMLStripper()
@@ -59,34 +40,26 @@ def _strip_html(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _parse_retry_seconds(error_str: str) -> int:
-    """Extract retry_delay.seconds from a 429 error message body."""
-    match = re.search(r"retry_delay\s*\{\s*seconds:\s*(\d+)", error_str)
-    return int(match.group(1)) + 5 if match else 65
-
-
-# ── Pydantic schema for structured output ─────────────────────────────────────
-# The new SDK's response.parsed automatically deserialises JSON into this class.
-# No manual json.loads(), no ```json fence stripping needed.
+# ── Pydantic schema ───────────────────────────────────────────────────────────
 
 class SentimentResult(BaseModel):
-    sentiment: str          # "positive" | "negative" | "neutral"
-    confidence: float       # 0.0 – 1.0
-    impact: str             # "high" | "medium" | "low"
-    sector_impact: str      # e.g. "Banking", "IT", "general market"
-    key_themes: list[str]   # ["earnings", "buyback", ...]
-    reasoning: str          # one sentence
+    sentiment:     str        # "positive" | "negative" | "neutral"
+    confidence:    float      # 0.0 – 1.0
+    impact:        str        # "high" | "medium" | "low"
+    sector_impact: str        # e.g. "Banking", "IT", "general market"
+    key_themes:    list[str]  # ["earnings", "buyback", ...]
+    reasoning:     str        # one-sentence explanation
 
     @field_validator("sentiment")
     @classmethod
     def validate_sentiment(cls, v):
-        v = v.lower()
+        v = str(v).lower().strip()
         return v if v in ("positive", "negative", "neutral") else "neutral"
 
     @field_validator("impact")
     @classmethod
     def validate_impact(cls, v):
-        v = v.lower()
+        v = str(v).lower().strip()
         return v if v in ("high", "medium", "low") else "low"
 
     @field_validator("confidence")
@@ -107,213 +80,200 @@ _NEUTRAL_RESULT = SentimentResult(
     reasoning="analysis unavailable",
 )
 
-# Free-tier quota (requests/day, RPM):
-#   gemini-1.5-flash      → 1500 req/day, 15 RPM   ← BEST free option, START HERE
-#   gemini-1.5-flash-8b   → 1500 req/day, 15 RPM
-#   gemini-2.0-flash-lite → varies by region (often 0 free)
-#   gemini-2.0-flash      → 0 free in most regions (DO NOT USE)
-_MODEL_PRIORITY = [
-    "gemini-1.5-flash",      # Primary: guaranteed 1500 req/day free
-    "gemini-1.5-flash-8b",   # Secondary: also 1500 req/day free
-    # Commented out 2.0 models—they have 0 free quota in most regions and cause 429 errors
-    # "gemini-2.0-flash-lite",
-    # "gemini-2.0-flash",
-]
+# ── Prompts ───────────────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT = (
+    "You are a financial analyst specializing in Indian equities (NSE/BSE). "
+    "Analyze the sentiment of the financial news article provided. "
+    "Return ONLY a JSON object matching the required schema — no preamble, no markdown."
+)
+
+_HUMAN_TEMPLATE = (
+    "Article Title: {title}\n"
+    "Article Summary: {summary}\n"
+    "{symbol_line}"
+    "\nClassify the sentiment as positive, negative, or neutral. "
+    "Be specific about which sector is impacted and provide a short reasoning."
+)
+
+
+# ── LLM Factory ──────────────────────────────────────────────────────────────
+
+def _build_llm():
+    """
+    Try each provider in priority order based on available API keys.
+    Returns a LangChain BaseChatModel instance.
+    """
+
+    # ── 1. Groq (Free tier — llama-3.1-8b-instant, 6000 tokens/min) ──────────────
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            from langchain_groq import ChatGroq
+            llm = ChatGroq(
+                api_key=groq_key,
+                model="llama-3.1-8b-instant",
+                temperature=0.1,
+                max_tokens=512,
+            )
+            logger.info("LLM Provider: Groq — llama-3.1-8b-instant (free tier)")
+            return llm
+        except ImportError:
+            logger.warning("langchain_groq not installed → pip install langchain-groq")
+        except Exception as e:
+            logger.warning(f"Groq init failed: {e}")
+
+    # ── 3. Google Gemini via LangChain wrapper ────────────────────────────────
+    # Probes model names in order; uses the first one that responds successfully.
+    # gemini-1.5-flash returns 404 in some regions — fallback list handles this.
+    google_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if google_key:
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_core.messages import HumanMessage as _HM
+
+            _GOOGLE_MODELS = [
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite",
+                "gemini-1.5-flash-latest",
+                "gemini-1.5-flash",
+                "gemini-1.5-pro",
+            ]
+
+            for _model in _GOOGLE_MODELS:
+                try:
+                    _llm = ChatGoogleGenerativeAI(
+                        google_api_key=google_key,
+                        model=_model,
+                        temperature=0.1,
+                        max_output_tokens=512,
+                        convert_system_message_to_human=True,
+                    )
+                    _llm.invoke([_HM(content="Hi")])   # quick probe
+                    logger.info(f"LLM Provider: Google Gemini — {_model} (LangChain wrapper)")
+                    return _llm
+                except Exception as _probe_err:
+                    _msg = str(_probe_err)
+                    if "404" in _msg or "not found" in _msg.lower() or "invalid" in _msg.lower():
+                        logger.warning(f"Gemini model '{_model}' not available (404) — trying next…")
+                        continue
+                    logger.warning(f"Gemini '{_model}' non-404 error: {_msg[:120]}")
+                    break   # auth/quota error — stop trying Gemini
+
+            logger.warning("No Google Gemini model available in this region/account.")
+        except ImportError:
+            logger.warning("langchain_google_genai not installed → pip install langchain-google-genai")
+        except Exception as e:
+            logger.warning(f"Google Gemini init failed: {e}")
+
+    raise ValueError(
+        "\n\nNo LLM provider configured. Add ONE of these to your .env file:\n\n"
+        "  GROQ_API_KEY=...       # FREE — https://console.groq.com\n"
+        "  OPENAI_API_KEY=...     # Paid — https://platform.openai.com\n"
+        "  GOOGLE_API_KEY=...     # Free tier — https://aistudio.google.com\n"
+        "  ANTHROPIC_API_KEY=...  # Paid — https://console.anthropic.com\n"
+    )
 
 
 # ── SentimentAnalyzer ─────────────────────────────────────────────────────────
 
 class SentimentAnalyzer:
     """
-    Analyze financial news sentiment using the new Google GenAI SDK.
+    Analyze financial news sentiment using LangChain structured output.
 
-    Rate-limit policy (free tier)
-    ─────────────────────────────
-    • min_delay_seconds=5.0  →  12 req/min  (safely under 15 RPM limit)
-    • On 429: reads retry_delay from error body, waits that + jitter, retries
-    • max_retries=2: after 2 retries gives up and returns neutral result
-    • max_articles=15: conservative daily limit (1500 ÷ 100 runs ÷ safety margin)
+    The .with_structured_output(SentimentResult) binding enforces the Pydantic
+    schema at the LLM provider level — no manual JSON parsing required.
+    Provider selection is automatic based on available API keys in .env.
     """
 
-    def __init__(self, min_delay_seconds: float = 5.0, max_retries: int = 2):
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "No API key found. Set GEMINI_API_KEY in your .env file."
-            )
-
+    def __init__(self, min_delay_seconds: float = 2.0, max_retries: int = 3):
         self.min_delay   = min_delay_seconds
         self.max_retries = max_retries
 
-        # ── New SDK client (the ONLY correct way as of 2025) ─────────────────
-        # Reference: https://ai.google.dev/gemini-api/docs/migrate#api-access
-        try:
-            from google import genai
-            self._client     = genai.Client(api_key=api_key)
-            self._model_name = self._pick_model()
-            logger.info(f"google-genai SDK ready | model: {self._model_name}")
-        except ImportError:
-            raise ImportError(
-                "google-genai package not installed.\n"
-                "Run: pip install -U google-genai\n"
-                "Do NOT use google-generativeai — it is deprecated."
-            )
-
-    # ── Model selection ───────────────────────────────────────────────────────
-
-    def _pick_model(self) -> str:
-        """Return the first available model from priority list (with models/ prefix)."""
-        try:
-            available = {m.name for m in self._client.models.list()}
-            for candidate in _MODEL_PRIORITY:
-                # Check both with and without prefix; return with prefix
-                if candidate in available or f"models/{candidate}" in available:
-                    model_with_prefix = f"models/{candidate}" if not candidate.startswith("models/") else candidate
-                    logger.info(f"Selected model: {model_with_prefix}")
-                    return model_with_prefix
-        except Exception as e:
-            logger.warning(f"Model listing failed: {e}. Defaulting to models/gemini-1.5-flash")
-        return "models/gemini-1.5-flash"
-
-    # ── Core generate with structured output + retry ──────────────────────────
-
-    def _generate_structured(self, prompt: str) -> Optional[SentimentResult]:
-        """
-        Call the API requesting JSON parsed directly into SentimentResult.
-        Uses response_mime_type + response_schema → response.parsed.
-        No manual JSON parsing needed — the SDK handles it.
-        Reference: https://ai.google.dev/gemini-api/docs/migrate#json-response
-        """
-        from google.genai import types
-
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=SentimentResult,
-            temperature=0.1,        # low temp → consistent structured output
-            max_output_tokens=300,
-        )
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                response = self._client.models.generate_content(
-                    model=self._model_name,
-                    contents=prompt,
-                    config=config,
-                )
-                # response.parsed is auto-deserialised SentimentResult instance
-                if response.parsed is not None:
-                    return response.parsed
-
-                # Fallback: manual parse if .parsed is None for some reason
-                raw = response.text or ""
-                raw = re.sub(r"^```(?:json)?", "", raw.strip(), flags=re.IGNORECASE).strip()
-                raw = re.sub(r"```$", "", raw).strip()
-                return SentimentResult.model_validate_json(raw)
-
-            except Exception as e:
-                err = str(e)
-                # Only treat as rate limit if it's actually a 429/rate issue, NOT 404
-                is_rate_limit = any(
-                    kw in err.lower()
-                    for kw in ("429", "quota", "rate", "exceeded", "resource_exhausted")
-                ) and "404" not in err
-                
-                # Log 404 as a configuration problem
-                if "404" in err:
-                    logger.error(f"Model endpoint 404 Not Found (configuration issue): {err[:200]}")
-                    return None
-
-                # If rate-limited, try to switch to another available model first
-                if is_rate_limit and attempt < self.max_retries:
-                    try:
-                        available = {m.name for m in self._client.models.list()}
-                    except Exception:
-                        available = set()
-
-                    switched = False
-                    for cand in _MODEL_PRIORITY:
-                        cand_with_prefix = f"models/{cand}" if not cand.startswith("models/") else cand
-                        if cand_with_prefix == self._model_name:
-                            continue
-                        if cand in available or f"models/{cand}" in available:
-                            logger.warning(f"Model {self._model_name} rate-limited; switching to {cand_with_prefix} and retrying.")
-                            self._model_name = cand_with_prefix
-                            switched = True
-                            break
-
-                    if switched:
-                        # immediately retry with the new model
-                        continue
-
-                    # no alternate model available — fall back to waiting
-                    wait = _parse_retry_seconds(err) + random.uniform(2, 8)
-                    logger.warning(
-                        f"  429 rate limit (attempt {attempt+1}/{self.max_retries+1}). "
-                        f"No alternate model found; waiting {wait:.0f}s…"
-                    )
-                    time.sleep(wait)
-                    continue
-
-                # Log and give up after retries exhausted or non-rate-limit error
-                if is_rate_limit:
-                    logger.error(
-                        f"Rate limit persists after {self.max_retries} retries. Returning neutral."
-                    )
-                else:
-                    logger.error(f"API error: {err[:200]}")
-                return None
+        self._base_llm = _build_llm()
+        # .with_structured_output → returns SentimentResult instances directly
+        self._chain = self._base_llm.with_structured_output(SentimentResult)
+        logger.info("SentimentAnalyzer ready (LangChain structured output chain).")
 
     # ── Single article ────────────────────────────────────────────────────────
 
     def analyze_article_sentiment(
         self,
-        title: str,
+        title:   str,
         summary: str,
-        symbol: Optional[str] = None,
+        symbol:  Optional[str] = None,
     ) -> dict:
         """Analyze one article. Always returns a dict (never raises)."""
         title   = _strip_html(str(title))   if pd.notna(title)   else ""
         summary = _strip_html(str(summary)) if pd.notna(summary) else ""
-        sym_str = str(symbol) if symbol and pd.notna(symbol) else ""
 
         if not title and not summary:
             return {**_NEUTRAL_RESULT.to_dict(), "reasoning": "empty article"}
 
-        prompt = (
-            "You are a financial analyst specializing in Indian equities (NSE/BSE). "
-            "Analyze the sentiment of the following news article.\n\n"
-            f"Title: {title}\n"
-            f"Summary: {summary}\n"
-            + (f"Stock symbol: {sym_str}\n" if sym_str else "")
-            + "\nClassify sentiment as positive, negative, or neutral. "
-            "Be specific about which sector is impacted."
-        )
+        sym_line = f"Stock Symbol: {symbol}\n" if symbol and pd.notna(symbol) else ""
 
-        result = self._generate_structured(prompt)
-        if result is None:
-            return _NEUTRAL_RESULT.to_dict()
-        return result.to_dict()
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [
+            SystemMessage(content=_SYSTEM_PROMPT),
+            HumanMessage(content=_HUMAN_TEMPLATE.format(
+                title=title,
+                summary=summary[:800],   # cap length to save tokens
+                symbol_line=sym_line,
+            )),
+        ]
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                result: SentimentResult = self._chain.invoke(messages)
+                return result.to_dict()
+
+            except Exception as e:
+                err = str(e)
+
+                # 404 = wrong model name / endpoint — no point retrying
+                if "404" in err or "not found" in err.lower():
+                    logger.error("Model endpoint 404 — check model name/region. Returning neutral.")
+                    return _NEUTRAL_RESULT.to_dict()
+
+                is_rate_limit = any(
+                    k in err.lower()
+                    for k in ("429", "rate", "quota", "exceeded", "resource_exhausted")
+                )
+
+                if is_rate_limit and attempt < self.max_retries:
+                    wait = 60 + random.uniform(5, 15)
+                    logger.warning(
+                        f"Rate limit (attempt {attempt+1}/{self.max_retries+1}). "
+                        f"Waiting {wait:.0f}s…"
+                    )
+                    time.sleep(wait)
+                    continue
+
+                logger.error(f"Sentiment error (attempt {attempt+1}): {err[:200]}")
+                if attempt < self.max_retries:
+                    time.sleep(2 ** attempt)   # exponential back-off
+                    continue
+                break
+
+        return _NEUTRAL_RESULT.to_dict()
 
     # ── Bulk analysis ─────────────────────────────────────────────────────────
 
     def analyze_bulk_sentiment(
         self,
-        news_df: pd.DataFrame,
+        news_df:      pd.DataFrame,
         max_articles: int = 15,
     ) -> pd.DataFrame:
         """
-        Analyze up to max_articles rows with enforced per-request delay.
+        Analyze up to max_articles rows.
         Skips rows that already have a valid sentiment value.
-
-        Free tier budget: gemini-1.5-flash allows 1500 req/day.
-        At max_articles=15 per run, that allows 100 pipeline runs/day.
+        Enforces min_delay_seconds between requests to respect rate limits.
         """
         df      = news_df.head(max_articles).copy()
         results = []
         total   = len(df)
 
         for i, (idx, row) in enumerate(df.iterrows()):
-            # Skip already-analyzed rows
             existing = row.get("sentiment", None)
             if isinstance(existing, str) and existing in ("positive", "negative", "neutral"):
                 logger.info(f"[{i+1}/{total}] Already analyzed — skipping.")
@@ -321,22 +281,19 @@ class SentimentAnalyzer:
                 continue
 
             title_preview = str(row.get("title", ""))[:60]
-            logger.info(f"[{i+1}/{total}] {title_preview}…")
+            logger.info(f"[{i+1}/{total}] Analyzing: {title_preview}…")
 
-            t_start = time.monotonic()
-
+            t_start   = time.monotonic()
             sentiment = self.analyze_article_sentiment(
-                title=row.get("title", ""),
+                title=row.get("title",   ""),
                 summary=row.get("summary", ""),
-                symbol=row.get("symbol", None),
+                symbol=row.get("symbol",  None),
             )
             results.append({**row.to_dict(), **sentiment})
 
-            # Enforce per-request delay to stay within free RPM limit
             elapsed   = time.monotonic() - t_start
             remaining = self.min_delay - elapsed
             if remaining > 0 and i < total - 1:
-                logger.debug(f"  Rate-limit sleep {remaining:.1f}s")
                 time.sleep(remaining)
 
         return pd.DataFrame(results)
@@ -346,23 +303,25 @@ class SentimentAnalyzer:
     def get_market_sentiment_summary(self, sentiment_df: pd.DataFrame) -> str:
         """
         Generate a plain-text market outlook from aggregated sentiment.
-        Falls back to a rule-based summary if API call fails.
+        Falls back to rule-based summary if the API call fails.
         """
         if sentiment_df.empty or "sentiment" not in sentiment_df.columns:
             return "Insufficient data for market summary."
 
         counts   = sentiment_df["sentiment"].value_counts().to_dict()
-        avg_conf = round(sentiment_df["confidence"].mean(), 2) if "confidence" in sentiment_df.columns else "N/A"
+        avg_conf = (
+            round(sentiment_df["confidence"].mean(), 2)
+            if "confidence" in sentiment_df.columns else "N/A"
+        )
         top_secs = (
             sentiment_df["sector_impact"].value_counts().head(5).to_dict()
             if "sector_impact" in sentiment_df.columns else {}
         )
 
-        # Rule-based fallback (used if API fails)
         pos = counts.get("positive", 0)
         neg = counts.get("negative", 0)
-        neu = counts.get("neutral", 0)
-        total = pos + neg + neu or 1
+        neu = counts.get("neutral",  0)
+        total    = pos + neg + neu or 1
         dominant = max(counts, key=counts.get) if counts else "neutral"
         fallback = (
             f"Market sentiment is predominantly {dominant} "
@@ -380,11 +339,9 @@ class SentimentAnalyzer:
         )
 
         try:
-            response = self._client.models.generate_content(
-                model=self._model_name,
-                contents=prompt,
-            )
-            return response.text.strip()
+            from langchain_core.messages import HumanMessage
+            response = self._base_llm.invoke([HumanMessage(content=prompt)])
+            return response.content.strip()
         except Exception as e:
             logger.error(f"Market summary API error: {e}")
             return fallback
@@ -393,15 +350,16 @@ class SentimentAnalyzer:
 # ── CLI smoke-test ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Testing SentimentAnalyzer with new google-genai SDK…\n")
+    import json
+    print("Testing SentimentAnalyzer with LangChain…\n")
 
-    analyzer = SentimentAnalyzer(min_delay_seconds=5.0)
+    analyzer = SentimentAnalyzer(min_delay_seconds=1.0)
 
     test_articles = [
         {
             "title":   "Buy HDFC Bank; target of Rs 1,850: ICICI Securities",
             "summary": "ICICI Securities is bullish on HDFC Bank and has recommended "
-                       "a buy rating with a target price of Rs 1,850 dated April 21, 2024.",
+                       "a buy rating with a target price of Rs 1,850.",
             "symbol":  "HDFCBANK.NS",
         },
         {

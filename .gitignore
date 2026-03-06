@@ -12,3 +12,4 @@
 /models
 /models/checkpoints/
 /streamlit_app/pages/__pycache__/
+/src/data_collection/__pycache__/

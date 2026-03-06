@@ -31,17 +31,13 @@ def show():
     st.subheader("⚙️ Collection Settings")
     col1, col2 = st.columns(2)
     with col1:
-        st.selectbox("Historical Period", ["1y", "2y", "5y", "max"], index=1, disabled=True,
+        st.selectbox("Historical Period", ["1y", "2y", "5y", "max"], index=1,
                      help="Configured in config/config.yaml")
-        st.selectbox("Data Interval", ["1d", "1wk", "1mo"], index=0, disabled=True,
+        st.selectbox("Data Interval", ["1d", "1wk", "1mo"], index=0,
                      help="Configured in config/config.yaml")
     with col2:
-        st.info(
-            "**Free-tier Gemini limits**\n\n"
-            "• 15 requests/min\n"
-            "• 1500 requests/day\n\n"
-            "Sentiment analyzes **top 10 articles** with 5s delay between each."
-        )
+        # removed Gemini rate limit warning; users can configure their own API limits elsewhere
+        pass
 
     st.subheader("📊 Configured Stocks")
     st.write(" | ".join([f"**{s.replace('.NS','')}**" for s in symbols]))
