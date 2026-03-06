@@ -24,9 +24,16 @@ drift:
   detection_threshold: 0.1
   
 # MLflow
+# tracking_uri options:
+#   Local SQLite (default, works everywhere including Streamlit Cloud):
+#     sqlite:///mlflow/mlflow.db
+#   Local server (for local dev with full MLflow UI):
+#     http://localhost:5000  → run: mlflow server --port 5000
+#   Remote server (for Jenkins/Railway production):
+#     http://your-mlflow-server:5000
 mlflow:
   experiment_name: "stock_prediction"
-  tracking_uri: "http://localhost:5000"
+  tracking_uri: "sqlite:///mlflow/mlflow.db"
   
 # Retraining Schedule
 retraining:

@@ -62,9 +62,7 @@ class ModelTrainer:
         # all load from models_dir.
         self.models_dir = os.path.join(root, "models", "saved_models")
         self.plots_dir  = os.path.join(root, "logs", "plots")
-        self.mlflow_uri = self.config.get("mlflow", {}).get(
-            "tracking_uri", "http://localhost:5000"
-        )
+        self.mlflow_uri = self._resolve_mlflow_uri(root)
 
         os.makedirs(self.models_dir, exist_ok=True)
         os.makedirs(self.plots_dir,  exist_ok=True)
@@ -73,6 +71,57 @@ class ModelTrainer:
         logger.info(f"  Models dir: {self.models_dir}")
         logger.info(f"  Plots dir:  {self.plots_dir}")
         logger.info(f"  MLflow URI: {self.mlflow_uri}")
+
+    # ── MLflow URI resolver ────────────────────────────────────────────────────
+
+    def _resolve_mlflow_uri(self, project_root: str) -> str:
+        """
+        Return a working MLflow tracking URI:
+          1. If MLFLOW_TRACKING_URI env var is set → use it
+          2. Try the configured URI from config.yaml — if it's reachable use it
+          3. Fall back to a local SQLite file (works everywhere, no server needed)
+
+        This ensures the app works on Streamlit Cloud (no localhost server),
+        in Docker, in Jenkins CI, and in local dev — without changing config.
+        """
+        import socket
+
+        # ── Env var override (highest priority) ──────────────────────────────
+        env_uri = os.getenv("MLFLOW_TRACKING_URI")
+        if env_uri:
+            logger.info(f"MLflow URI from env: {env_uri}")
+            return env_uri
+
+        # ── Configured URI ────────────────────────────────────────────────────
+        configured = self.config.get("mlflow", {}).get("tracking_uri", "")
+
+        if configured and not configured.startswith("http"):
+            # Already a file/sqlite URI — use directly
+            logger.info(f"MLflow URI (file-based from config): {configured}")
+            return configured
+
+        if configured and configured.startswith("http"):
+            # Try a TCP connection to see if the server is actually running
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(configured)
+                host   = parsed.hostname or "localhost"
+                port   = parsed.port     or 5000
+                with socket.create_connection((host, port), timeout=2):
+                    logger.info(f"MLflow server reachable at {configured}")
+                    return configured
+            except (OSError, ConnectionRefusedError):
+                logger.warning(
+                    f"MLflow server not reachable at {configured}. "
+                    f"Falling back to local SQLite."
+                )
+
+        # ── SQLite fallback (always works, no server needed) ─────────────────
+        mlflow_dir = os.path.join(project_root, "mlflow")
+        os.makedirs(mlflow_dir, exist_ok=True)
+        sqlite_uri = f"sqlite:///{mlflow_dir}/mlflow.db"
+        logger.info(f"MLflow URI (SQLite fallback): {sqlite_uri}")
+        return sqlite_uri
 
     # ── Train single symbol ────────────────────────────────────────────────────
 

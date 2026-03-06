@@ -41,7 +41,22 @@ def show():
         dropout     = st.slider("Dropout Rate",     min_value=0.0, max_value=0.5, value=0.2, step=0.05)
     with col3:
         seq_length  = st.number_input("Sequence Length", min_value=30, max_value=120, value=60, step=10)
-        st.metric("MLflow", "localhost:5000", help="Start with: mlflow server --port 5000")
+        # Show actual MLflow backend being used
+        import socket
+        _mlflow_cfg = config.get("mlflow", {}).get("tracking_uri", "")
+        _server_up  = False
+        if _mlflow_cfg.startswith("http"):
+            try:
+                from urllib.parse import urlparse as _up
+                _p = _up(_mlflow_cfg)
+                with socket.create_connection((_p.hostname or "localhost", _p.port or 5000), timeout=1):
+                    _server_up = True
+            except Exception:
+                pass
+        if _server_up:
+            st.metric("MLflow", "Server", help=f"Connected to {_mlflow_cfg}")
+        else:
+            st.metric("MLflow", "SQLite", help="Using local mlflow/mlflow.db (no server needed on Streamlit Cloud)")
 
     # ── Stock selection ────────────────────────────────────────────────────────
     st.subheader("📊 Select Stocks to Train")
