@@ -50,7 +50,7 @@ st.markdown("""
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    [" Dashboard", " Data Collection", " Model Training", " Predictions", " AI Advisor", " Performance Monitor"]
+    [" Dashboard", " Manage Stocks", " Data Collection", " Model Training", " Predictions", " AI Advisor", " Performance Monitor"]
 )
 
 # Main title
@@ -60,6 +60,9 @@ st.markdown('<div class="main-header"> Stock Prediction MLOps System</div>', uns
 if page == " Dashboard":
     from pages import dashboard
     dashboard.show()
+elif page == " Manage Stocks":
+    from pages import manage_stocks
+    manage_stocks.show()
 elif page == " Data Collection":
     from pages import data_collection
     data_collection.show()

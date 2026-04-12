@@ -13,6 +13,7 @@ for p in [SRC_ROOT, PROJECT_ROOT]:
 
 from model.model_trainer import ModelTrainer
 from preprocessing.data_preprocessor import DataPreprocessor
+from config_manager import ConfigManager
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "saved_models")
 
@@ -26,8 +27,9 @@ def show():
     st.header(" Model Training")
     st.write("Train Bidirectional LSTM models for stock price prediction with MLflow tracking.")
 
-    config  = _load_config()
-    symbols = config["data_collection"]["stock_symbols"]
+    # Use ConfigManager to get all stocks including custom ones
+    cm = ConfigManager()
+    symbols = cm.get_all_stocks()
 
     # ── Settings ──────────────────────────────────────────────────────────────
     st.subheader(" Training Settings")
@@ -43,6 +45,7 @@ def show():
         seq_length  = st.number_input("Sequence Length", min_value=30, max_value=120, value=60, step=10)
         # Show actual MLflow backend being used
         import socket
+        config = _load_config()
         _mlflow_cfg = config.get("mlflow", {}).get("tracking_uri", "")
         _server_up  = False
         if _mlflow_cfg.startswith("http"):

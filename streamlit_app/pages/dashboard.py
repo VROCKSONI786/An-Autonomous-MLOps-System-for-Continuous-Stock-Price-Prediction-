@@ -11,6 +11,8 @@ for p in [SRC_ROOT, PROJECT_ROOT]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from config_manager import ConfigManager
+
 MODELS_DIR   = os.path.join(PROJECT_ROOT, "models", "saved_models")
 DATA_RAW_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
 LOGS_DIR     = os.path.join(PROJECT_ROOT, "logs")
@@ -31,8 +33,10 @@ def _count_files(directory: str, pattern: str) -> int:
 def show():
     st.header(" Dashboard Overview")
 
-    config  = _load_config()
-    symbols = config["data_collection"]["stock_symbols"]
+    # Use ConfigManager to get all stocks (default + custom)
+    cm = ConfigManager()
+    symbols = cm.get_all_stocks()
+    stats = cm.get_stats()
 
     # ── System status KPIs ────────────────────────────────────────────────────
     st.subheader(" System Status")
@@ -50,6 +54,10 @@ def show():
               delta=" All trained" if model_files == len(symbols) else "⚠ Incomplete")
     c4.metric("Drift Reports", drift_files)
     c5.metric("Perf Snapshots", perf_files)
+    
+    # Show stock breakdown
+    if stats['custom_stocks_count'] > 0:
+        st.caption(f"📌 {stats['default_stocks_count']} default stocks + ➕ {stats['custom_stocks_count']} custom stocks")
 
     st.divider()
 

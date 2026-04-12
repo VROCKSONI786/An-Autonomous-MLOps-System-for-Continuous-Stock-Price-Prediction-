@@ -12,6 +12,7 @@ for p in [SRC_ROOT, PROJECT_ROOT]:
         sys.path.insert(0, p)
 
 from data_collection.data_orchestrator import DataOrchestrator
+from config_manager import ConfigManager
 
 
 def _load_config() -> dict:
@@ -23,8 +24,10 @@ def show():
     st.header(" Data Collection")
     st.write("Collect stock price data, fundamentals, and news for analysis.")
 
-    config  = _load_config()
-    symbols = config["data_collection"]["stock_symbols"]
+    # Use ConfigManager to get all stocks including custom ones
+    cm = ConfigManager()
+    symbols = cm.get_all_stocks()
+    stats = cm.get_stats()
     data_dir = os.path.join(PROJECT_ROOT, "data", "raw")
 
     # ── Settings ──────────────────────────────────────────────────────────────
@@ -40,7 +43,18 @@ def show():
         pass
 
     st.subheader(" Configured Stocks")
-    st.write(" | ".join([f"**{s.replace('.NS','')}**" for s in symbols]))
+    
+    # Show breakdown of stock types
+    if stats['custom_stocks_count'] > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**📌 Default ({stats['default_stocks_count']}):** {', '.join([s.replace('.NS','') for s in stats['default_stocks']])}")
+        with col2:
+            st.write(f"**➕ Custom ({stats['custom_stocks_count']}):** {', '.join([s.replace('.NS','') for s in stats['custom_stocks']])}")
+    else:
+        st.write(" | ".join([f"**{s.replace('.NS','')}**" for s in symbols]))
+    
+    st.caption(f"Total: {len(symbols)} stocks tracked")
 
     # ── Collect button ────────────────────────────────────────────────────────
     if st.button(" Start Data Collection", width='stretch', type="primary"):

@@ -15,6 +15,7 @@ from data_collection.yfinance_collector import YFinanceCollector
 from data_collection.screener_collector import ScreenerCollector
 from data_collection.news_collector import NewsCollector
 from data_collection.sentiment_analyzer import SentimentAnalyzer
+from config_manager import ConfigManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,17 +27,15 @@ def _project_root() -> str:
 
 
 class DataOrchestrator:
-    """Orchestrate all data collection activities."""
+    """Orchestrate all data collection activities with support for custom stocks."""
 
-    def __init__(self, config_path: str | None = None):
+    def __init__(self, config_path: str | None = None, use_custom_stocks: bool = True):
         root = _project_root()
-        if config_path is None:
-            config_path = os.path.join(root, "config", "config.yaml")
-
-        logger.info(f"Loading config from: {config_path}")
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
-
+        
+        # Use ConfigManager for unified config handling
+        self.config_manager = ConfigManager(config_path)
+        self.config = self.config_manager.get_config(include_custom_stocks=use_custom_stocks)
+        
         self.symbols  = self.config["data_collection"]["stock_symbols"]
         self.period   = self.config["data_collection"]["period"]
         self.interval = self.config["data_collection"]["interval"]
@@ -44,6 +43,8 @@ class DataOrchestrator:
         # Always save raw data under project_root/data/raw/
         self.data_dir = os.path.join(root, "data", "raw")
         os.makedirs(self.data_dir, exist_ok=True)
+        
+        logger.info(f"DataOrchestrator initialized with {len(self.symbols)} stocks: {', '.join([s.replace('.NS', '') for s in self.symbols[:5]])}{'...' if len(self.symbols) > 5 else ''}")
 
     def collect_all_data(self) -> dict:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
