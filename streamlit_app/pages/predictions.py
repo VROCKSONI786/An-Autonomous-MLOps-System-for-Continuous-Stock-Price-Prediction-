@@ -8,6 +8,10 @@ import plotly.express as px
 import streamlit as st
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC_ROOT = os.path.join(PROJECT_ROOT, "src")
@@ -17,6 +21,8 @@ for p in [SRC_ROOT, PROJECT_ROOT]:
 
 from model.lstm_model import LSTMStockModel
 from preprocessing.data_preprocessor import DataPreprocessor
+from data_collection.live_news_collector import LiveNewsCollector
+from data_collection.sentiment_analyzer import SentimentAnalyzer
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "saved_models")
 SCALER_PATH = os.path.join(PROJECT_ROOT, "models", "scaler.pkl")
@@ -73,10 +79,94 @@ def _forecast_future(
     return np.array(predictions)
 
 
+def _get_sentiment_context(symbol: str) -> dict:
+    """
+    Get latest news and sentiment analysis for a stock.
+    Returns: {
+        'sentiment_score': float (0-1),
+        'sentiment_label': str ('positive', 'negative', 'neutral'),
+        'confidence': float,
+        'news_df': DataFrame,
+        'digest': str,
+        'error': str or None
+    }
+    """
+    try:
+        # Try to fetch latest news
+        news_collector = LiveNewsCollector()
+        context = news_collector.get_prediction_context(symbol, include_market_news=False)
+        news_df = context["stock_news"]
+        
+        if news_df.empty:
+            return {
+                'sentiment_score': 0.5,
+                'sentiment_label': 'neutral',
+                'confidence': 0.0,
+                'news_df': news_df,
+                'digest': 'No recent news available',
+                'error': 'No news articles found'
+            }
+        
+        # Analyze sentiment of articles
+        try:
+            analyzer = SentimentAnalyzer(min_delay_seconds=1.0, max_retries=1)
+            sentiment_df = analyzer.analyze_bulk_sentiment(news_df, max_articles=min(5, len(news_df)))
+            
+            # Aggregate sentiment
+            if not sentiment_df.empty and 'sentiment' in sentiment_df.columns:
+                sentiment_scores = {
+                    'positive': 1.0,
+                    'neutral': 0.5,
+                    'negative': 0.0
+                }
+                
+                scores = sentiment_df['sentiment'].map(sentiment_scores)
+                avg_sentiment = scores.mean()
+                avg_confidence = sentiment_df['confidence'].mean() if 'confidence' in sentiment_df.columns else 0.5
+                
+                # Determine label
+                if avg_sentiment > 0.65:
+                    label = 'positive'
+                elif avg_sentiment > 0.35:
+                    label = 'neutral'
+                else:
+                    label = 'negative'
+                
+                return {
+                    'sentiment_score': avg_sentiment,
+                    'sentiment_label': label,
+                    'confidence': avg_confidence,
+                    'news_df': sentiment_df,
+                    'digest': f"Analysis of {len(sentiment_df)} articles → {label.upper()}",
+                    'error': None
+                }
+        
+        except Exception as e:
+            # If sentiment analysis fails, return neutral with news articles
+            return {
+                'sentiment_score': 0.5,
+                'sentiment_label': 'neutral',
+                'confidence': 0.0,
+                'news_df': news_df,
+                'digest': f"Found {len(news_df)} articles (sentiment analysis unavailable)",
+                'error': f"Sentiment analysis failed: {str(e)[:100]}"
+            }
+    
+    except Exception as e:
+        return {
+            'sentiment_score': 0.5,
+            'sentiment_label': 'neutral',
+            'confidence': 0.0,
+            'news_df': pd.DataFrame(),
+            'digest': 'Unable to fetch news',
+            'error': str(e)
+        }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 def show():
-    st.header("📈 Stock Price Predictions")
+    st.header("Stock Price Predictions")
 
     available = _available_models()
     if not available:
@@ -152,8 +242,17 @@ def _run_predictions(symbol: str, forecast_days: int, show_ci: bool):
         else:
             dir_acc = 0.0
 
+    # ── Get sentiment context ──────────────────────────────────────────────
+    sentiment_context = _get_sentiment_context(symbol)
+    
+    # Blend LSTM confidence with sentiment confidence
+    lstm_confidence = (dir_acc / 100.0)  # Convert percentage to 0-1 scale
+    sentiment_weight = 0.3
+    lstm_weight = 0.7
+    blended_confidence = (lstm_confidence * lstm_weight) + (sentiment_context['confidence'] * sentiment_weight)
+
     # ── KPI cards ──────────────────────────────────────────────────────────
-    st.subheader("📊 Model Metrics")
+    st.subheader(" Model Metrics")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("MAE", f"₹{mae:.2f}")
     c2.metric("RMSE", f"₹{rmse:.2f}")
@@ -161,8 +260,65 @@ def _run_predictions(symbol: str, forecast_days: int, show_ci: bool):
     c4.metric("MAPE", f"{mape:.2f}%")
     c5.metric("Dir Accuracy", f"{dir_acc:.1f}%")
 
-    # ── Chart ─────────────────────────────────────────────────────────────
-    st.subheader("📈 Historical Predictions vs Actual")
+    # ── Sentiment & News Context ────────────────────────────────────────────
+    st.divider()
+    st.subheader(" Latest News & Market Sentiment")
+    
+    news_col1, news_col2 = st.columns([2, 1])
+    
+    with news_col2:
+        # Sentiment badge
+        sentiment_emoji = {
+            'positive': '📈',
+            'negative': '📉',
+            'neutral': '➡️'
+        }
+        emoji = sentiment_emoji.get(sentiment_context['sentiment_label'], '➡️')
+        
+        st.metric(
+            f"{emoji} Market Sentiment",
+            sentiment_context['sentiment_label'].upper(),
+            f"Confidence: {sentiment_context['confidence']:.0%}"
+        )
+        
+        st.metric(
+            "Prediction Confidence",
+            f"{blended_confidence:.0%}",
+            f"(LSTM {lstm_weight:.0%} + Sentiment {sentiment_weight:.0%})"
+        )
+    
+    with news_col1:
+        if sentiment_context['error']:
+            st.warning(f" {sentiment_context['error']}")
+        else:
+            st.info(sentiment_context['digest'])
+    
+    # News articles
+    if not sentiment_context['news_df'].empty:
+        st.subheader(" Related News Articles")
+        news_display = sentiment_context['news_df'].head(5).copy()
+        
+        # Create displayable format
+        for idx, article in news_display.iterrows():
+            with st.expander(article.get('title', 'Article')[:80]):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Source:** {article.get('source', 'N/A')}")
+                    st.write(article.get('summary', 'No summary')[:300])
+                    if article.get('link'):
+                        st.markdown(f"[Read Full Article →]({article['link']})")
+                with col2:
+                    if 'sentiment' in article:
+                        sent = article['sentiment']
+                        sent_emoji = '✅' if sent == 'positive' else ('⚠️' if sent == 'neutral' else '❌')
+                        st.write(f"{sent_emoji} {sent.title()}")
+                    if 'confidence' in article:
+                        st.write(f"Conf: {article['confidence']:.0%}")
+    else:
+        st.info("No recent news articles found for this stock.")
+
+    st.divider()
+    st.subheader(" Historical Predictions vs Actual")
 
     # Show last 90 points to keep chart readable
     view_n = min(90, len(y_actual_inr))

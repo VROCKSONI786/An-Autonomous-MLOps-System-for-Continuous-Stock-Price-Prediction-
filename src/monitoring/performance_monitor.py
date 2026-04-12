@@ -6,9 +6,15 @@ import numpy as np
 import pandas as pd
 import joblib
 import yaml
-import mlflow
 from datetime import datetime
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+# ── Set MLflow tracking URI to project root (BEFORE importing mlflow) ───
+_project_root_temp = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_mlflow_db_path = os.path.join(_project_root_temp, "mlflow", "mlflow.db")
+os.environ["MLFLOW_TRACKING_URI"] = f"sqlite:///{_mlflow_db_path}"
+
+import mlflow
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.lstm_model import LSTMStockModel

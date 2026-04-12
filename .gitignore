@@ -9,7 +9,28 @@
 /logs/
 /logs/plots/
 /mlruns
+/xxtra
 /models
 /models/checkpoints/
 /streamlit_app/pages/__pycache__/
 /src/data_collection/__pycache__/
+
+# Global Python cache patterns
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE & OS
+.DS_Store
+Thumbs.db

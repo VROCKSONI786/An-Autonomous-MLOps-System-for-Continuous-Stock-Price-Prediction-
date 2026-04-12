@@ -21,6 +21,12 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")   # non-interactive backend (no display needed)
 import matplotlib.pyplot as plt
+
+# ── Set MLflow tracking URI to project root (BEFORE importing mlflow) ───
+_project_root_temp = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_mlflow_db_path = os.path.join(_project_root_temp, "mlflow", "mlflow.db")
+os.environ["MLFLOW_TRACKING_URI"] = f"sqlite:///{_mlflow_db_path}"
+
 import mlflow
 import mlflow.keras
 

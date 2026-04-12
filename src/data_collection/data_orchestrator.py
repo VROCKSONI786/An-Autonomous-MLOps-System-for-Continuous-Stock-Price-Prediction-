@@ -4,6 +4,10 @@ from datetime import datetime
 import logging
 import os
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,6 +48,8 @@ class DataOrchestrator:
     def collect_all_data(self) -> dict:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         logger.info("=== Starting Data Collection ===")
+        
+        sentiment_summary = None
 
         # ── 1. Stock prices ───────────────────────────────────────────────────
         logger.info("Step 1: Collecting stock price data…")
@@ -101,8 +107,8 @@ class DataOrchestrator:
                 logger.info(f"✓ Sentiment: {len(sentiment_data)} articles → {sent_file}")
 
                 # Market summary
-                summary = analyzer.get_market_sentiment_summary(sentiment_data)
-                logger.info(f"\n=== Market Sentiment Summary ===\n{summary}\n")
+                sentiment_summary = analyzer.get_market_sentiment_summary(sentiment_data)
+                logger.info(f"\n=== Market Sentiment Summary ===\n{sentiment_summary}\n")
 
             except Exception as e:
                 logger.error(f"Sentiment analysis failed: {e}")
@@ -113,10 +119,11 @@ class DataOrchestrator:
         logger.info("=== Data Collection Complete ===")
 
         return {
-            "price_data":       price_data,
-            "fundamental_data": fundamental_data,
-            "news_data":        news_data,
-            "sentiment_data":   sentiment_data,
+            "price_data":           price_data,
+            "fundamental_data":     fundamental_data,
+            "news_data":            news_data,
+            "sentiment_data":       sentiment_data,
+            "sentiment_summary":    sentiment_summary,
         }
 
 

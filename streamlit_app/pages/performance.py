@@ -111,6 +111,37 @@ def show():
     # ══════════════════════════════════════════════════════════════════════════
     st.subheader("📈 Model Performance (INR Scale)")
 
+    # Add explanation
+    with st.expander("ℹ️ Understanding Performance Metrics"):
+        st.markdown("""
+        ### Key Metrics Explained
+
+        **MAE (Mean Absolute Error)** - ₹X
+        - Average amount (in rupees) predictions are off by
+        - Example: MAE = ₹45 means on average prediction is ±₹45 from actual
+        - **When to act**: If MAE increases by >20%, retrain model
+        
+        **MAPE (Mean Absolute Percentage Error)** - X%
+        - Percentage error across all predictions
+        - More useful than MAE because it scales with stock price
+        - Stock at ₹500: 2% error = ±₹10 | Stock at ₹2000: 2% error = ±₹40
+        - **Threshold**: < 3% is GOOD | 3-5% is ACCEPTABLE | > 5% needs attention
+        
+        **Direction Accuracy** - X%
+        - "Did we correctly predict UP or DOWN?" (Most important for traders)
+        - Baseline: 50% (random coin flip)
+        - Your model: 72% = 44% BETTER than random
+        - **Threshold**: > 60% is GOOD | > 70% is EXCELLENT
+        
+        **R² Score** - 0.0 to 1.0
+        - How well model explains price variance (0 = useless, 1 = perfect)
+        - 0.8+ = Strong | 0.5-0.8 = Moderate | <0.5 = Weak signal
+        
+        **Hit Rate** - (Direction_Acc + Within_2%) / 2
+        - Combined metric for trading reliability
+        - **Production threshold**: > 65%
+        """)
+
     metrics = st.session_state.get("perf_metrics", None)
     degraded = st.session_state.get("perf_degraded", [])
 
@@ -196,6 +227,36 @@ def show():
     # DRIFT SECTION
     # ══════════════════════════════════════════════════════════════════════════
     st.subheader("🌊 Data Drift Detection")
+
+    # Add drift explanation
+    with st.expander("ℹ️ What is Data Drift? Why Does It Matter?"):
+        st.markdown("""
+        ### Understanding Data Drift
+
+        **What is it?**
+        - Changes in real-world data patterns compared to training data
+        - "Your model learned from 2023 data, but now it's 2026 — market has changed"
+        
+        **Why it matters?**
+        - LSTM models assume: "Future patterns ≈ Past patterns"
+        - When drift occurs, this assumption breaks down
+        - Predictions become unreliable → Need to retrain
+        
+        ### Common Drift Causes
+        1. **Market Volatility Change** — Volume_MA, Volatility_ATR increase
+        2. **Sector Rotation** — Beta changes (stock moves differently vs benchmark)
+        3. **Company Events** — Earnings, splits, dividend changes
+        4. **Macro Shifts** — Interest rate changes, inflation, policy
+        5. **Seasonal Patterns** — New trading patterns emerge
+        
+        ### What To Do?
+        - 🟢 **Green (No Drift)**: Continue using model as is
+        - 🟡 **Yellow (Low-Medium Drift)**: Monitor closely, plan retraining
+        - 🔴 **Red (High Drift)**: RETRAIN IMMEDIATELY
+        
+        ### Retraining Process
+        Typically takes 5-10 minutes per stock (new data + training)
+        """)
 
     drift_results = st.session_state.get("drift_results", None)
 

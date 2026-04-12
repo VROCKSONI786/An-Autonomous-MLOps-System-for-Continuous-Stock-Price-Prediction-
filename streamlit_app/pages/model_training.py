@@ -23,14 +23,14 @@ def _load_config() -> dict:
 
 
 def show():
-    st.header("🤖 Model Training")
+    st.header(" Model Training")
     st.write("Train Bidirectional LSTM models for stock price prediction with MLflow tracking.")
 
     config  = _load_config()
     symbols = config["data_collection"]["stock_symbols"]
 
     # ── Settings ──────────────────────────────────────────────────────────────
-    st.subheader("⚙️ Training Settings")
+    st.subheader(" Training Settings")
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -59,38 +59,38 @@ def show():
             st.metric("MLflow", "SQLite", help="Using local mlflow/mlflow.db (no server needed on Streamlit Cloud)")
 
     # ── Stock selection ────────────────────────────────────────────────────────
-    st.subheader("📊 Select Stocks to Train")
+    st.subheader(" Select Stocks to Train")
     selected = st.multiselect("Stocks", symbols, default=symbols)
 
     # ── Step 1: Preprocess ────────────────────────────────────────────────────
-    st.subheader("🔧 Step 1 — Preprocess Data")
+    st.subheader(" Step 1 — Preprocess Data")
     st.caption("Must run before training if data has changed.")
 
-    if st.button("📊 Preprocess Data", width='stretch'):
+    if st.button(" Preprocess Data", width='stretch'):
         with st.spinner("Preprocessing… creating technical indicators and scaling data."):
             try:
                 preprocessor = DataPreprocessor()
                 result       = preprocessor.preprocess_pipeline()
                 if result is not None:
-                    st.success(f"✅ Preprocessed data shape: {result.shape}")
+                    st.success(f" Preprocessed data shape: {result.shape}")
                     st.dataframe(result.head(5), width="stretch")
                 else:
-                    st.error("❌ Preprocessing failed — ensure stock_prices_*.csv exists in data/raw/")
+                    st.error(" Preprocessing failed — ensure stock_prices_*.csv exists in data/raw/")
             except Exception as e:
-                st.error(f"❌ Preprocessing error: {e}")
+                st.error(f" Preprocessing error: {e}")
 
     # ── Step 2: Train ─────────────────────────────────────────────────────────
-    st.subheader("🚀 Step 2 — Train Models")
+    st.subheader(" Step 2 — Train Models")
 
-    if st.button("🤖 Start Training", width='stretch', type="primary"):
+    if st.button(" Start Training", width='stretch', type="primary"):
         if not selected:
-            st.warning("⚠ Select at least one stock.")
+            st.warning(" Select at least one stock.")
             return
 
         # Check preprocessed data exists
         prep_path = os.path.join(PROJECT_ROOT, "data", "processed", "preprocessed_data.csv")
         if not os.path.exists(prep_path):
-            st.error("❌ preprocessed_data.csv not found. Run Preprocess Data first.")
+            st.error(" preprocessed_data.csv not found. Run Preprocess Data first.")
             return
 
         progress = st.progress(0, text="Starting training…")
@@ -114,14 +114,14 @@ def show():
                 try:
                     model, metrics = trainer.train_for_symbol(symbol)
                     results[symbol] = metrics
-                    log_area.success(f"✅ {symbol} — MAE: {metrics[1]:.6f}")
+                    log_area.success(f" {symbol} — MAE: {metrics[1]:.6f}")
                 except Exception as e:
-                    log_area.warning(f"⚠ {symbol} failed: {e}")
+                    log_area.warning(f" {symbol} failed: {e}")
 
-            progress.progress(100, text="✅ Training complete!")
+            progress.progress(100, text=" Training complete!")
 
             if results:
-                st.success(f"✅ Trained {len(results)}/{len(selected)} models successfully!")
+                st.success(f" Trained {len(results)}/{len(selected)} models successfully!")
                 results_df = pd.DataFrame([
                     {
                         "Symbol":    sym,
@@ -133,14 +133,14 @@ def show():
                 ])
                 st.dataframe(results_df, width="stretch", hide_index=True)
             else:
-                st.error("❌ No models trained successfully.")
+                st.error(" No models trained successfully.")
 
         except Exception as e:
-            st.error(f"❌ Training error: {e}")
+            st.error(f" Training error: {e}")
 
     # ── Saved models ───────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("💾 Saved Models")
+    st.subheader(" Saved Models")
 
     if os.path.exists(MODELS_DIR):
         model_files = sorted(

@@ -29,13 +29,13 @@ def _count_files(directory: str, pattern: str) -> int:
 
 
 def show():
-    st.header("🏠 Dashboard Overview")
+    st.header(" Dashboard Overview")
 
     config  = _load_config()
     symbols = config["data_collection"]["stock_symbols"]
 
     # ── System status KPIs ────────────────────────────────────────────────────
-    st.subheader("📊 System Status")
+    st.subheader(" System Status")
 
     data_files   = _count_files(DATA_RAW_DIR, "stock_prices_")
     model_files  = _count_files(MODELS_DIR, ".keras")
@@ -47,28 +47,28 @@ def show():
     c2.metric("Data Snapshots", data_files,
               delta="Ready" if data_files else "Run Collection")
     c3.metric("Trained Models", f"{model_files}/{len(symbols)}",
-              delta="✅ All trained" if model_files == len(symbols) else "⚠ Incomplete")
+              delta=" All trained" if model_files == len(symbols) else "⚠ Incomplete")
     c4.metric("Drift Reports", drift_files)
     c5.metric("Perf Snapshots", perf_files)
 
     st.divider()
 
     # ── Tracked stocks ────────────────────────────────────────────────────────
-    st.subheader("📈 Tracked Stocks")
+    st.subheader(" Tracked Stocks")
     cols = st.columns(len(symbols))
     for i, symbol in enumerate(symbols):
         company = symbol.replace(".NS", "")
         model_exists = os.path.exists(
             os.path.join(MODELS_DIR, f"{symbol}_lstm_model.keras")
         )
-        status = "🟢 Trained" if model_exists else "🔴 Not trained"
+        status = " Trained" if model_exists else " Not trained"
         with cols[i]:
             st.metric(company, status, label_visibility="visible")
 
     st.divider()
 
     # ── Pipeline status ───────────────────────────────────────────────────────
-    st.subheader("🔄 Pipeline Status")
+    st.subheader(" Pipeline Status")
 
     steps = [
         ("Data Collection",     os.path.exists(DATA_RAW_DIR) and data_files > 0,          "data/raw/stock_prices_*.csv"),
@@ -83,7 +83,7 @@ def show():
     for name, done, path in steps:
         rows.append({
             "Step":   name,
-            "Status": "✅ Done" if done else "⏳ Pending",
+            "Status": " Done" if done else " Pending",
             "Output": path,
         })
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
@@ -91,7 +91,7 @@ def show():
     st.divider()
 
     # ── Recent activity ───────────────────────────────────────────────────────
-    st.subheader("📋 Recent Files")
+    st.subheader(" Recent Files")
 
     all_files = []
     for directory, label in [
@@ -120,14 +120,14 @@ def show():
     st.divider()
 
     # ── Quick actions ─────────────────────────────────────────────────────────
-    st.subheader("⚡ Quick Actions")
+    st.subheader(" Quick Actions")
     c1, c2, c3, c4 = st.columns(4)
 
-    if c1.button("📥 Collect Data", width='stretch'):
-        st.info("Go to **📥 Data Collection** in the sidebar.")
-    if c2.button("🤖 Train Models", width='stretch'):
-        st.info("Go to **🤖 Model Training** in the sidebar.")
-    if c3.button("📈 Predictions", width='stretch'):
-        st.info("Go to **📈 Predictions** in the sidebar.")
-    if c4.button("📊 Monitor", width='stretch'):
-        st.info("Go to **📊 Performance Monitor** in the sidebar.")
+    if c1.button(" Collect Data", width='stretch'):
+        st.info("Go to ** Data Collection** in the sidebar.")
+    if c2.button(" Train Models", width='stretch'):
+        st.info("Go to ** Model Training** in the sidebar.")
+    if c3.button(" Predictions", width='stretch'):
+        st.info("Go to ** Predictions** in the sidebar.")
+    if c4.button(" Monitor", width='stretch'):
+        st.info("Go to ** Performance Monitor** in the sidebar.")

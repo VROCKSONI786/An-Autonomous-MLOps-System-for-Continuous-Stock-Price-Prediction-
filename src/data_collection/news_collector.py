@@ -14,18 +14,32 @@ class NewsCollector:
     def __init__(self, data_dir=None):
         self.data_dir = data_dir
         self.sources = {
-            'moneycontrol': 'https://www.moneycontrol.com/rss/latestnews.xml',
+            "livemint_markets": "https://www.livemint.com/rss/markets",
+            "livemint_economy": "https://www.livemint.com/rss/economy",
             'economic_times': 'https://economictimes.indiatimes.com/rssfeedstopstories.cms',
             'business_standard': 'https://www.business-standard.com/rss/home_page_top_stories.rss',
             "reuters_business": "https://feeds.reuters.com/reuters/businessNews",
             "reuters_markets":  "https://feeds.reuters.com/reuters/companyNews",
             "economic_times":   "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
-            "moneycontrol":     "https://www.moneycontrol.com/rss/MCtopnews.xml",
+            "moneycontrol":     "https://www.moneycontrol.com/rss/market-news.xml",  # Updated URL for latest news
             "business_standard":"https://www.business-standard.com/rss/markets-106.rss",
-            "livemint_markets": "https://www.livemint.com/rss/markets",
             "rbi_press":        "https://www.rbi.org.in/pressreleases/rss.aspx",
             "investing_india":  "https://in.investing.com/rss/news_283.rss",
         }
+    
+    def _is_article_recent(self, published_date, days=30):
+        """Check if article is from the last N days (filters out old articles like 2016)"""
+        if not published_date:
+            return True  # Assume recent if no date
+        
+        try:
+            from email.utils import parsedate_to_datetime
+            article_date = parsedate_to_datetime(published_date)
+            cutoff_date = datetime.now() - timedelta(days=days)
+            return article_date >= cutoff_date
+        except:
+            # If date parsing fails, assume it's recent
+            return True
         
     def fetch_rss_news(self, source_name, url, max_articles=20):
         """Fetch news from RSS feed"""
@@ -35,6 +49,11 @@ class NewsCollector:
             
             articles = []
             for entry in feed.entries[:max_articles]:
+                # Filter out old articles (older than 30 days)
+                if not self._is_article_recent(entry.get('published', ''), days=30):
+                    logger.debug(f"Skipping old article: {entry.get('title', '')[:50]}")
+                    continue
+                
                 article = {
                     'source': source_name,
                     'title': entry.get('title', ''),
@@ -63,6 +82,11 @@ class NewsCollector:
             
             articles = []
             for entry in feed.entries[:max_articles]:
+                # Filter out old articles (older than 30 days)
+                if not self._is_article_recent(entry.get('published', ''), days=30):
+                    logger.debug(f"Skipping old article: {entry.get('title', '')[:50]}")
+                    continue
+                
                 article = {
                     'source': 'yahoo_finance',
                     'symbol': symbol,
